@@ -2,15 +2,14 @@
 #
 # VERSION ${MESA_VERSION}
 
-FROM ubuntu:20.04
+FROM nvidia/cuda:12.2.0-devel-ubuntu20.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Build arguments.
 ARG VCS_REF
 ARG BUILD_DATE
-ARG MESA_DEMOS="false"
-ARG MESA_VERSION="23.2.1"
+ARG MESA_VERSION="21.2.6"
 
 # Labels / Metadata.
 # LABEL maintainer="James Brink, brink.james@gmail.com" \
@@ -25,57 +24,43 @@ ARG MESA_VERSION="23.2.1"
 # Enable source code repositories.
 RUN sed -i 's/# deb-src/deb-src/g' /etc/apt/sources.list
 
-# Install all needed deps and compile the mesa llvmpipe driver from source.
-RUN set -xe
-RUN apt-get update -y && apt-get install -y build-essential git python3-dev python3-pip
-RUN	apt-get build-dep -y mesa
-RUN apt-get install -y wget
-RUN	pip install mako
-RUN pip install --user meson
+# Install all needed dependencies.
+RUN set -xe \
+    && apt-get update -y \
+    && apt-get install -y build-essential git python3-dev python3-pip wget libdrm-dev pkg-config \
+                       llvm-dev libwayland-dev wayland-protocols libwayland-egl-backend-dev \
+                       libx11-dev libxext-dev libxfixes-dev libxcb-glx0-dev libxcb-shm0-dev \
+                       libx11-xcb-dev libxcb-dri2-0-dev libxcb-dri3-dev libxcb-present-dev \
+                       libxshmfence-dev libxxf86vm-dev libxrandr-dev ninja-build bison flex \
+                       freeglut3-dev
+
+RUN	pip install mako meson
+
+# Get Mesa3D source code.
 RUN mkdir -p /var/tmp/build; \
     cd /var/tmp/build; \
     wget "https://mesa.freedesktop.org/archive/mesa-${MESA_VERSION}.tar.xz"; \
     tar xfv mesa-${MESA_VERSION}.tar.xz; \
-    rm mesa-${MESA_VERSION}.tar.xz; \
-    cd mesa-${MESA_VERSION}; \
-    # ./configure --enable-glx=gallium-xlib --with-gallium-drivers=swrast,swr --disable-dri --disable-gbm --disable-egl --enable-gallium-osmesa --prefix=/usr/local; \
-	# meson setup build64 --libdir lib64 --prefix $HOME/mesa -Dgallium-drivers=swrast -Dvulkan-drivers=swrast -Dbuildtype=release; \
-    # make; \
-    # make install; \
-    # cd .. ; \
-	meson setup builddir/ -Dprefix="/usr/local" -Dgallium-drivers=swrast -Dvulkan-drivers=swrast; \
-	meson install -C builddir/; \
-    rm -rf mesa-${MESA_VERSION};
-    # if [ "${MESA_DEMOS}" == "true" ]; then \
-    #     apk add --no-cache --virtual .mesa-demos-runtime-deps glu glew \
-    #     && apk add --no-cache --virtual .mesa-demos-build-deps glew-dev freeglut-dev \
-    #     && wget "ftp://ftp.freedesktop.org/pub/mesa/demos/mesa-demos-8.4.0.tar.gz" \
-    #     && tar xfv mesa-demos-8.4.0.tar.gz \
-    #     && rm mesa-demos-8.4.0.tar.gz \
-    #     && cd mesa-demos-8.4.0 \
-    #     && ./configure --prefix=/usr/local \
-    #     && make \
-    #     && make install \
-    #     && cd .. \
-    #     && rm -rf mesa-demos-8.4.0 \
-    #     && apk del .mesa-demos-build-deps; \
-    # fi; \
-    # apk del .build-deps;
+    rm mesa-${MESA_VERSION}.tar.xz;
 
-RUN apt-get install freeglut3-dev mesa-utils libgl1-mesa-glx -y
+RUN cd /var/tmp/build; \
+    wget "https://archive.mesa3d.org/demos/8.5.0/mesa-demos-8.5.0.tar.gz"; \
+    tar xfv mesa-demos-8.5.0.tar.gz; \
+    rm mesa-demos-8.5.0.tar.gz;
 
-# Copy our entrypoint into the container.
-COPY ./entrypoint.sh /usr/local/bin/entrypoint.sh
+# Build Mesa3D.
+RUN meson setup /var/tmp/build/mesa-${MESA_VERSION} /usr/local \
+                                                         -Dglx=gallium-xlib \
+                                                         -Dgallium-drivers=swrast \
+                                                         -Dplatforms=x11 \
+                                                         -Ddri3=false \
+                                                         -Ddri-drivers="" \
+                                                         -Dvulkan-drivers="" \
+                                                         -Dbuildtype=release \
+                                                         -Doptimization=3 \
+                                                         -Dprefix=/usr/local
 
-# Setup our environment variables.
-ENV XVFB_WHD="1920x1080x24"\
-    DISPLAY=":99" \
-    LIBGL_ALWAYS_SOFTWARE="1" \
-    GALLIUM_DRIVER="llvmpipe" \
-    LP_NO_RAST="false" \
-    LP_DEBUG="" \
-    LP_PERF="" \
-    LP_NUM_THREADS=""
+RUN meson install -C /usr/local;
 
-# Set the default command.
-ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+RUN	meson setup /var/tmp/build/mesa-demos-8.5.0 /var/tmp/build/mesa-demos-8.5.0/builddir -Dprefix=/var/tmp/build/mesa-demos-8.5.0/builddir;
+RUN meson install -C /var/tmp/build/mesa-demos-8.5.0/builddir;
